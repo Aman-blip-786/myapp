@@ -60,35 +60,61 @@ app.get("/gmail/auth-url", (req, res) => {
 app.get("/oauth-gmail", async (req, res) => {
   try {
     const code = req.query.code;
+
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
       "https://myapp-gw5z.onrender.com/oauth-gmail"
     );
+
     const { tokens } = await oauth2Client.getToken(code);
-    if (!tokens.refresh_token) {
-      return res.send("No refresh token received. Please revoke access and try again with prompt: 'consent'.");
+
+    // Get user email
+    oauth2Client.setCredentials(tokens);
+    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+    const profile = await gmail.users.getProfile({ userId: "me" });
+    const email = profile.data.emailAddress;
+
+    // Save tokens into Supabase
+    const { error } = await supabase.from("gmail_tokens").upsert(
+      {
+        email,
+        access_token: tokens.access_token || null,
+        refresh_token: tokens.refresh_token || null,
+        scope: tokens.scope || null,
+        token_type: tokens.token_type || null,
+        expiry_date: tokens.expiry_date || null,
+      },
+      { onConflict: "email" }
+    );
+
+    if (error) {
+      console.error("Supabase OAuth save error:", error);
+      return res.status(500).send("Error saving tokens.");
     }
-    fs.writeFileSync("/data/gmail_token.json", JSON.stringify(tokens));
-    res.send("Gmail connected!");
+
+    res.send("Gmail connected and token saved in Supabase!");
   } catch (error) {
     console.error("OAuth error:", error);
-    res.status(500).send("Error connecting Gmail");
+    res.status(500).send("OAuth failed");
   }
 });
+
 
 const seenMessageIds = new Set();
 
 async function pollGmail() {
   try {
-    if (!fs.existsSync("gmail_token.json")) {
-      console.log("No Gmail token found, skipping poll");
-      return;
-    }
+    console.log("Polling Gmail...");
 
-    const tokenData = JSON.parse(fs.readFileSync("gmail_token.json", "utf8"));
-    if (!tokenData.refresh_token) {
-      console.log("No refresh token in gmail_token.json");
+    // Get tokens from Supabase
+    const { data: tokens, error } = await supabase
+      .from("gmail_tokens")
+      .select("*")
+      .single();
+
+    if (error || !tokens) {
+      console.log("No Gmail tokens found in Supabase.");
       return;
     }
 
@@ -97,61 +123,50 @@ async function pollGmail() {
       process.env.GOOGLE_CLIENT_SECRET,
       "https://myapp-gw5z.onrender.com/oauth-gmail"
     );
-    oauth2Client.setCredentials({ refresh_token: tokenData.refresh_token });
+
+    oauth2Client.setCredentials({
+      refresh_token: tokens.refresh_token,
+    });
 
     const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+
     const { data: messagesList } = await gmail.users.messages.list({
       userId: "me",
       maxResults: 5,
       labelIds: ["INBOX"],
     });
 
-    if (!messagesList.messages) return;
-
-    for (const message of messagesList.messages) {
-      if (seenMessageIds.has(message.id)) continue;
-      seenMessageIds.add(message.id);
-
-      try {
-        const { data: messageData } = await gmail.users.messages.get({
-          userId: "me",
-          id: message.id,
-        });
-
-        const payload = messageData.payload;
-        const headers = payload.headers || [];
-        const subject = headers.find((h) => h.name === "Subject")?.value || "";
-        const snippet = messageData.snippet || "";
-
-        const messageText = `Subject: ${subject}\n${snippet}`;
-
-        const { error } = await supabase.from("client_messages").insert([
-          {
-            project_id: null,
-            message_text: messageText,
-            source: "email",
-          },
-        ]);
-
-        if (error) {
-          console.error("Supabase insert error:", error);
-          continue;
-        }
-
-        const backendUrl = process.env.BACKEND_BASE_URL || "https://myapp-gw5z.onrender.com";
-        await fetch(`${backendUrl}/analyze-scope`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ project_id: null, message_text: messageText }),
-        }).catch((err) => console.error("Analyze endpoint error:", err));
-      } catch (err) {
-        console.error(`Error processing message ${message.id}:`, err);
-      }
+    if (!messagesList.messages) {
+      console.log("No messages.");
+      return;
     }
-  } catch (error) {
-    console.error("Poll Gmail error:", error);
+
+    for (const msg of messagesList.messages) {
+      if (seenMessageIds.has(msg.id)) continue;
+      seenMessageIds.add(msg.id);
+
+      const { data: msgData } = await gmail.users.messages.get({
+        userId: "me",
+        id: msg.id,
+      });
+
+      const subject =
+        msgData.payload.headers.find((h) => h.name === "Subject")?.value || "";
+      const snippet = msgData.snippet || "";
+
+      const messageText = `Subject: ${subject}\n${snippet}`;
+
+      await supabase.from("client_messages").insert([
+        { project_id: null, message_text: messageText, source: "email" },
+      ]);
+
+      console.log("Saved message:", subject);
+    }
+  } catch (err) {
+    console.error("Poll Gmail error:", err);
   }
 }
+
 
 if (typeof pollGmail === "function") {
   setInterval(pollGmail, 60_000);
