@@ -60,45 +60,73 @@ app.get("/gmail/auth-url", (req, res) => {
 app.get("/oauth-gmail", async (req, res) => {
   try {
     const code = req.query.code;
+    if (!code) return res.status(400).send("Missing code");
 
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
-      "https://myapp-gw5z.onrender.com/oauth-gmail"
+      `${process.env.BACKEND_BASE_URL || "https://myapp-gw5z.onrender.com"}/oauth-gmail`
     );
 
     const { tokens } = await oauth2Client.getToken(code);
-
-    // Get user email
     oauth2Client.setCredentials(tokens);
     const gmail = google.gmail({ version: "v1", auth: oauth2Client });
     const profile = await gmail.users.getProfile({ userId: "me" });
     const email = profile.data.emailAddress;
 
-    // Save tokens into Supabase
-    const { error } = await supabase.from("gmail_tokens").upsert(
-      {
-        email,
-        access_token: tokens.access_token || null,
-        refresh_token: tokens.refresh_token || null,
-        scope: tokens.scope || null,
-        token_type: tokens.token_type || null,
-        expiry_date: tokens.expiry_date || null,
-      },
-      { onConflict: "email" }
-    );
+    // Prepare row
+    const row = {
+      email,
+      access_token: tokens.access_token || null,
+      refresh_token: tokens.refresh_token || null,
+      scope: tokens.scope || null,
+      token_type: tokens.token_type || null,
+      expiry_date: tokens.expiry_date || null,
+      created_at: new Date().toISOString()
+    };
 
-    if (error) {
-      console.error("Supabase OAuth save error:", error);
-      return res.status(500).send("Error saving tokens.");
+    // Try upsert first (works if UNIQUE constraint exists)
+    const upsertResp = await supabase.from("gmail_tokens").upsert(row, { onConflict: "email" });
+    if (upsertResp.error) {
+      console.warn("Upsert failed, will try insert/update fallback.", upsertResp.error);
+      // Insert fallback
+      const insertResp = await supabase.from("gmail_tokens").insert(row);
+      if (insertResp.error) {
+        // If insert fails because row exists, update instead
+        console.warn("Insert fallback failed, attempting update.", insertResp.error);
+        const updateResp = await supabase
+          .from("gmail_tokens")
+          .update({
+            access_token: row.access_token,
+            refresh_token: row.refresh_token,
+            scope: row.scope,
+            token_type: row.token_type,
+            expiry_date: row.expiry_date,
+          })
+          .eq("email", email);
+
+        if (updateResp.error) {
+          console.error("Update fallback failed:", updateResp.error);
+          return res.status(500).send("Error saving tokens (update fallback). Check logs.");
+        } else {
+          console.log("Updated tokens for", email);
+        }
+      } else {
+        console.log("Inserted tokens for", email);
+      }
+    } else {
+      console.log("Upserted tokens for", email);
     }
 
-    res.send("Gmail connected and token saved in Supabase!");
+    return res.send("Gmail connected and token saved in Supabase!");
   } catch (error) {
-    console.error("OAuth error:", error);
-    res.status(500).send("OAuth failed");
+    console.error("OAuth / token save error:", error);
+    // If Supabase returned a structured error object, include it in response for debugging (safe only for dev)
+    if (error?.message) return res.status(500).send(`OAuth error: ${error.message}`);
+    return res.status(500).send("OAuth failed (see logs)");
   }
 });
+
 
 
 const seenMessageIds = new Set();
