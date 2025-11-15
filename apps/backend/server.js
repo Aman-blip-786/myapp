@@ -69,7 +69,7 @@ app.get("/oauth-gmail", async (req, res) => {
     if (!tokens.refresh_token) {
       return res.send("No refresh token received. Please revoke access and try again with prompt: 'consent'.");
     }
-    fs.writeFileSync("gmail_token.json", JSON.stringify(tokens));
+    fs.writeFileSync("/data/gmail_token.json", JSON.stringify(tokens));
     res.send("Gmail connected!");
   } catch (error) {
     console.error("OAuth error:", error);
