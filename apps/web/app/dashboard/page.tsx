@@ -43,4 +43,9 @@ export default function DashboardPage() {
     </div>
   );
 }
+useEffect(() => {
+  fetch("https://myapp-backend.onrender.com")
+    .then(r => r.text())
+    .then(console.log);
+}, []);
 
