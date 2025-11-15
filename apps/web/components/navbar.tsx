@@ -21,13 +21,15 @@ export default function Navbar() {
       </Link>
 
       <div className="flex gap-4">
+        <Link href="/" className="hover:underline">
+          Home
+        </Link>
         <Link href="/dashboard" className="hover:underline">
           Dashboard
         </Link>
-
         <button
           onClick={logout}
-          className="px-3 py-1 bg-red-600 text-white rounded"
+          className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700"
         >
           Logout
         </button>

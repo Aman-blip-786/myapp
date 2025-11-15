@@ -3,14 +3,22 @@ import cors from "cors";
 import { createClient } from "@supabase/supabase-js";
 import { google } from "googleapis";
 import fs from "fs";
+console.log("USING BACKEND FILE:", import.meta.url);
 
+console.log("ENV CHECK:", {
+    SUPABASE_URL: process.env.SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ? "OK" : "MISSING",
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "OK" : "MISSING",
+  });
+  
 const app = express();
 app.use(express.json());
 app.use(cors());
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
 app.get("/", (req, res) => {

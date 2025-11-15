@@ -4,6 +4,26 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
+interface Project {
+  id: string;
+  title: string;
+  scope: string;
+  user_id: string;
+  created_at?: string;
+}
+
+interface Alert {
+  id: string;
+  ai_summary: string;
+  created_at?: string;
+}
+
+interface Approval {
+  id: string;
+  project_id: string;
+  status: string;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const supabase = createClient(
@@ -13,11 +33,14 @@ export default function DashboardPage() {
 
   const [loading, setLoading] = useState(true);
   const [userEmail, setUserEmail] = useState("");
+  const [userId, setUserId] = useState("");
 
-  const [projects, setProjects] = useState<any[]>([]);
-  const [alerts, setAlerts] = useState<any[]>([]);
-  const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [pendingApprovals, setPendingApprovals] = useState<Approval[]>([]);
   
+  const [newProjectTitle, setNewProjectTitle] = useState("");
+  const [newProjectScope, setNewProjectScope] = useState("");
 
   const [backendMessage, setBackendMessage] = useState("");
 
@@ -32,6 +55,7 @@ export default function DashboardPage() {
       }
 
       setUserEmail(data.session.user.email || "");
+      setUserId(data.session.user.id);
 
       // Load dashboard data
       loadDashboardData(data.session.user.id);
@@ -69,44 +93,95 @@ export default function DashboardPage() {
     setPendingApprovals(approvalsData || []);
   }
 
+  async function reloadProjects() {
+    if (!userId) return;
+    const { data } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+    setProjects(data || []);
+  }
+
+  async function handleNewProject(e: React.FormEvent) {
+    e.preventDefault();
+    if (!userId || !newProjectTitle || !newProjectScope) return;
+
+    const { error } = await supabase
+      .from("projects")
+      .insert([{ title: newProjectTitle, scope: newProjectScope, user_id: userId }]);
+
+    if (!error) {
+      setNewProjectTitle("");
+      setNewProjectScope("");
+      reloadProjects();
+    }
+  }
+
   if (loading) return <p className="p-6">Loading...</p>;
 
   return (
-    <div className="p-6 space-y-6">
-      <h1 className="text-2xl font-bold">Dashboard</h1>
+    <div className="container mx-auto px-4 py-8 space-y-6">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
+        <p className="text-gray-600 mb-1">Logged in as: {userEmail}</p>
+        <p className="text-blue-600 text-sm">
+          Backend says: <strong>{backendMessage}</strong>
+        </p>
+      </div>
 
-      <p>Logged in as: {userEmail}</p>
+      <section className="border border-gray-200 p-6 bg-white rounded-lg shadow-sm">
+        <h2 className="text-xl font-semibold mb-4">Your Projects</h2>
+        
+        <form onSubmit={handleNewProject} className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+          <div className="flex gap-3">
+            <input
+              type="text"
+              placeholder="Project title"
+              value={newProjectTitle}
+              onChange={(e) => setNewProjectTitle(e.target.value)}
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+            />
+            <input
+              type="text"
+              placeholder="Scope"
+              value={newProjectScope}
+              onChange={(e) => setNewProjectScope(e.target.value)}
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+            />
+            <button
+              type="submit"
+              className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition"
+            >
+              Add
+            </button>
+          </div>
+        </form>
 
-      <p className="text-blue-600">
-        Backend says: <strong>{backendMessage}</strong>
-      </p>
-
-      {/* Projects */}
-      <section className="border p-4 bg-white rounded shadow-sm">
-        <h2 className="text-xl font-semibold mb-2">Your Projects</h2>
         {projects.length === 0 ? (
-          <p>No projects yet.</p>
+          <p className="text-gray-500">No projects yet.</p>
         ) : (
-          <ul>
-            {projects.map((p: any) => (
-              <li key={p.id} className="p-2 border rounded mb-2">
-                <strong>{p.title}</strong>
-                <p>{p.scope}</p>
+          <ul className="space-y-3">
+            {projects.map((p) => (
+              <li key={p.id} className="p-4 border border-gray-200 rounded-lg bg-gray-50">
+                <strong className="text-lg">{p.title}</strong>
+                <p className="text-gray-600 mt-1">{p.scope}</p>
               </li>
             ))}
           </ul>
         )}
       </section>
 
-      {/* Alerts */}
-      <section className="border p-4 bg-white rounded shadow-sm">
-        <h2 className="text-xl font-semibold mb-2">Scope Creep Alerts</h2>
+      <section className="border border-gray-200 p-6 bg-white rounded-lg shadow-sm">
+        <h2 className="text-xl font-semibold mb-4">Scope Creep Alerts</h2>
         {alerts.length === 0 ? (
-          <p>No alerts.</p>
+          <p className="text-gray-500">No alerts.</p>
         ) : (
-          <ul>
-            {alerts.map((a: any) => (
-              <li key={a.id} className="p-2 border rounded mb-2">
+          <ul className="space-y-3">
+            {alerts.map((a) => (
+              <li key={a.id} className="p-4 border border-gray-200 rounded-lg bg-gray-50">
                 {a.ai_summary}
               </li>
             ))}
@@ -114,15 +189,14 @@ export default function DashboardPage() {
         )}
       </section>
 
-      {/* Pending Approvals */}
-      <section className="border p-4 bg-white rounded shadow-sm">
-        <h2 className="text-xl font-semibold mb-2">Pending Approvals</h2>
+      <section className="border border-gray-200 p-6 bg-white rounded-lg shadow-sm">
+        <h2 className="text-xl font-semibold mb-4">Pending Approvals</h2>
         {pendingApprovals.length === 0 ? (
-          <p>No pending approvals.</p>
+          <p className="text-gray-500">No pending approvals.</p>
         ) : (
-          <ul>
-            {pendingApprovals.map((a: any) => (
-              <li key={a.id} className="p-2 border rounded mb-2">
+          <ul className="space-y-3">
+            {pendingApprovals.map((a) => (
+              <li key={a.id} className="p-4 border border-gray-200 rounded-lg bg-gray-50">
                 {a.project_id} — {a.status}
               </li>
             ))}
